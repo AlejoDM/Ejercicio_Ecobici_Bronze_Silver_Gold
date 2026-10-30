@@ -1,0 +1,88 @@
+"""Capa gold: modelo estrella listo para el negocio.
+
+Gold solo arma tablas a partir de silver: no limpia ni corrige nada.
+"""
+
+import pandas as pd
+
+from src.almacenamiento import leer_particiones
+from src.config import SILVER
+
+DIAS_SEMANA = ["lunes", "martes", "miércoles", "jueves", "viernes", "sábado", "domingo"]
+
+RANGOS_ETARIOS = [0, 25, 35, 50, float("inf")]
+ETIQUETAS_ETARIAS = ["16-25", "26-35", "36-50", "51+"]
+
+
+def _clave_fecha(fecha: pd.Series) -> pd.Series:
+    """Fecha como entero AAAAMMDD, la clave de dim_fecha."""
+    return fecha.dt.strftime("%Y%m%d").astype("int64")
+
+
+def _rango_etario(edad: pd.Series) -> pd.Series:
+    """Rango etario del usuario; sin edad declarada queda DESCONOCIDO."""
+    rangos = pd.cut(edad.astype("float64"), bins=RANGOS_ETARIOS, labels=ETIQUETAS_ETARIAS)
+    return rangos.astype("string").fillna("DESCONOCIDO")
+
+
+def construir_dim_fecha(viajes: pd.DataFrame) -> pd.DataFrame:
+    """Un día por cada fecha entre el primer y el último viaje, sin huecos."""
+    inicio = viajes.fecha_hora_inicio.min().normalize()
+    fin = viajes.fecha_hora_inicio.max().normalize()
+
+    dim = pd.DataFrame({"fecha": pd.date_range(inicio, fin, freq="D")})
+    dim["fecha_key"] = _clave_fecha(dim.fecha)
+    dim["anio"] = dim.fecha.dt.year.astype("int64")
+    dim["mes"] = dim.fecha.dt.month.astype("int64")
+    dim["dia"] = dim.fecha.dt.day.astype("int64")
+    # Nombre en español fijo, sin depender del idioma configurado en el sistema.
+    dim["dia_semana"] = dim.fecha.dt.dayofweek.map(dict(enumerate(DIAS_SEMANA)))
+    dim["es_fin_de_semana"] = dim.fecha.dt.dayofweek >= 5
+    return dim[["fecha_key", "fecha", "anio", "mes", "dia", "dia_semana", "es_fin_de_semana"]]
+
+
+def construir_dim_estacion(viajes: pd.DataFrame) -> pd.DataFrame:
+    """Una fila por estación, con el nombre del año más reciente en que aparece."""
+    apariciones = pd.concat(
+        [
+            viajes[["id_estacion_origen", "nombre_estacion_origen", "anio_fuente"]].set_axis(
+                ["id_estacion", "nombre_estacion", "anio"], axis=1
+            ),
+            viajes[["id_estacion_destino", "nombre_estacion_destino", "anio_fuente"]].set_axis(
+                ["id_estacion", "nombre_estacion", "anio"], axis=1
+            ),
+        ],
+        ignore_index=True,
+    ).dropna(subset=["id_estacion"])
+
+    rangos = apariciones.groupby("id_estacion").agg(
+        primer_anio=("anio", "min"), ultimo_anio=("anio", "max")
+    )
+
+    # Del último año de cada estación, el nombre más frecuente.
+    del_ultimo_anio = apariciones[apariciones.anio == apariciones.id_estacion.map(rangos.ultimo_anio)]
+    nombres = (
+        del_ultimo_anio.dropna(subset=["nombre_estacion"])
+        .groupby(["id_estacion", "nombre_estacion"])
+        .size()
+        .reset_index(name="cantidad")
+        .sort_values(["id_estacion", "cantidad"], ascending=[True, False])
+        .drop_duplicates("id_estacion")
+        .set_index("id_estacion")["nombre_estacion"]
+    )
+
+    dim = rangos.join(nombres).reset_index()
+    return dim[["id_estacion", "nombre_estacion", "primer_anio", "ultimo_anio"]]
+
+
+def construir_dim_usuario(usuarios: pd.DataFrame) -> pd.DataFrame:
+    """Una fila por usuario, con rango etario y año de alta."""
+    return pd.DataFrame(
+        {
+            "id_usuario": usuarios.id_usuario,
+            "genero": usuarios.genero,
+            "edad": usuarios.edad,
+            "rango_etario": _rango_etario(usuarios.edad),
+            "anio_alta": usuarios.fecha_alta.dt.year.astype("int64"),
+        }
+    )
