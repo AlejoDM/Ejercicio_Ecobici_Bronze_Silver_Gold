@@ -41,37 +41,46 @@ def construir_dim_fecha(viajes: pd.DataFrame) -> pd.DataFrame:
     return dim[["fecha_key", "fecha", "anio", "mes", "dia", "dia_semana", "es_fin_de_semana"]]
 
 
+def _apariciones_estacion(viajes: pd.DataFrame, extremo: str) -> pd.DataFrame:
+    """Cuenta los viajes por estación, año y nombre para un extremo (origen o destino).
+
+    Se agrupa antes de unir los dos extremos: así la tabla que se combina
+    tiene miles de filas en lugar de millones.
+    """
+    return (
+        viajes.groupby([f"id_estacion_{extremo}", "anio_fuente", f"nombre_estacion_{extremo}"], dropna=False)
+        .size()
+        .reset_index(name="cantidad")
+        .set_axis(["id_estacion", "anio", "nombre_estacion", "cantidad"], axis=1)
+        .dropna(subset=["id_estacion"])
+    )
+
+
 def construir_dim_estacion(viajes: pd.DataFrame) -> pd.DataFrame:
     """Una fila por estación, con el nombre del año más reciente en que aparece."""
     apariciones = pd.concat(
-        [
-            viajes[["id_estacion_origen", "nombre_estacion_origen", "anio_fuente"]].set_axis(
-                ["id_estacion", "nombre_estacion", "anio"], axis=1
-            ),
-            viajes[["id_estacion_destino", "nombre_estacion_destino", "anio_fuente"]].set_axis(
-                ["id_estacion", "nombre_estacion", "anio"], axis=1
-            ),
-        ],
+        [_apariciones_estacion(viajes, "origen"), _apariciones_estacion(viajes, "destino")],
         ignore_index=True,
-    ).dropna(subset=["id_estacion"])
+    )
 
     rangos = apariciones.groupby("id_estacion").agg(
         primer_anio=("anio", "min"), ultimo_anio=("anio", "max")
     )
 
-    # Del último año de cada estación, el nombre más frecuente.
+    # Del último año de cada estación, el nombre con más viajes.
     del_ultimo_anio = apariciones[apariciones.anio == apariciones.id_estacion.map(rangos.ultimo_anio)]
     nombres = (
         del_ultimo_anio.dropna(subset=["nombre_estacion"])
-        .groupby(["id_estacion", "nombre_estacion"])
-        .size()
-        .reset_index(name="cantidad")
+        .groupby(["id_estacion", "nombre_estacion"])["cantidad"]
+        .sum()
+        .reset_index()
         .sort_values(["id_estacion", "cantidad"], ascending=[True, False])
         .drop_duplicates("id_estacion")
         .set_index("id_estacion")["nombre_estacion"]
     )
 
     dim = rangos.join(nombres).reset_index()
+    dim["nombre_estacion"] = dim["nombre_estacion"].astype("string")
     return dim[["id_estacion", "nombre_estacion", "primer_anio", "ultimo_anio"]]
 
 
@@ -135,6 +144,9 @@ def ejecutar_gold() -> dict[str, int]:
     """Construye el modelo estrella desde silver y lo guarda en data/gold/."""
     viajes = leer_particiones(SILVER / "viajes")
     usuarios = leer_particiones(SILVER / "usuarios")
+    # Hay pocos nombres distintos repetidos en millones de viajes: como categoría ocupan mucho menos.
+    for columna in ["nombre_estacion_origen", "nombre_estacion_destino"]:
+        viajes[columna] = viajes[columna].astype("category")
 
     dim_fecha = construir_dim_fecha(viajes)
     dim_estacion = construir_dim_estacion(viajes)
