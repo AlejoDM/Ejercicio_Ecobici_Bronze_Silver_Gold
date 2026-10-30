@@ -14,7 +14,7 @@ import pandas as pd
 import pyarrow as pa
 import pyarrow.parquet as pq
 
-from src.config import ANIOS, ARCHIVOS_RECORRIDOS, BRONZE, RAW, TAMANIO_LOTE
+from src.config import ANIOS, ARCHIVOS_RECORRIDOS, ARCHIVOS_USUARIOS, BRONZE, RAW, TAMANIO_LOTE
 
 
 @contextmanager
@@ -84,3 +84,16 @@ def ingestar_recorridos() -> dict[int, int]:
         anio: ingestar_archivo(RAW / ARCHIVOS_RECORRIDOS[anio], anio, BRONZE / "recorridos")
         for anio in ANIOS
     }
+
+
+def ingestar_usuarios() -> dict[int, int]:
+    """Ingesta los usuarios de todos los años. Devuelve filas por año."""
+    return {
+        anio: ingestar_archivo(RAW / ARCHIVOS_USUARIOS[anio], anio, BRONZE / "usuarios")
+        for anio in ANIOS
+    }
+
+
+def ejecutar_bronze() -> dict[str, dict[int, int]]:
+    """Ejecuta la capa bronze completa y devuelve filas escritas por tabla y año."""
+    return {"recorridos": ingestar_recorridos(), "usuarios": ingestar_usuarios()}
