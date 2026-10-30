@@ -8,6 +8,8 @@ import re
 import unicodedata
 
 import pandas as pd
+import pyarrow as pa
+import pyarrow.compute as pc
 import pyarrow.parquet as pq
 
 from src.almacenamiento import escribir_parquet
@@ -141,6 +143,12 @@ def _id_entero(serie: pd.Series) -> pd.Series:
 def _fecha(serie: pd.Series, formato: str) -> pd.Series:
     """Convierte a fecha con el formato del año. Lo que no se entiende queda NaT."""
     return pd.to_datetime(serie, format=formato, errors="coerce").astype("datetime64[ns]")
+
+
+def _fecha_viaje(serie: pd.Series) -> pd.Series:
+    """Fecha de viaje con PyArrow: evita crear millones de objetos de texto en memoria."""
+    fechas = pc.strptime(pa.array(serie), format=FORMATO_FECHA_VIAJE, unit="ns", error_is_null=True)
+    return pd.Series(fechas.to_numpy(zero_copy_only=False), index=serie.index)
 
 
 def _normalizar_nombre(texto: str) -> str | None:
@@ -290,8 +298,8 @@ def transformar_viajes(anio: int) -> pd.DataFrame:
     mapeo = MAPEO_VIAJES[anio]
     df = renombrar(_leer_bronze("recorridos", anio, mapeo), mapeo)
 
-    df["fecha_hora_inicio"] = _fecha(df.fecha_hora_inicio, FORMATO_FECHA_VIAJE)
-    df["fecha_hora_fin"] = _fecha(df.fecha_hora_fin, FORMATO_FECHA_VIAJE)
+    df["fecha_hora_inicio"] = _fecha_viaje(df.fecha_hora_inicio)
+    df["fecha_hora_fin"] = _fecha_viaje(df.fecha_hora_fin)
     df["id_estacion_origen"] = _id_entero(df.id_estacion_origen)
     df["id_estacion_destino"] = _id_entero(df.id_estacion_destino)
     df["nombre_estacion_origen"] = _nombres_estacion(df.nombre_estacion_origen)
@@ -320,4 +328,5 @@ def transformar_viajes(anio: int) -> pd.DataFrame:
         df["id_usuario"] = pd.NA
 
     df["anio_fuente"] = anio
-    return df.astype(ESQUEMA_VIAJES)[list(ESQUEMA_VIAJES)]
+    # Se descartan las columnas de origen antes de convertir, para no copiar el año completo dos veces.
+    return df[list(ESQUEMA_VIAJES)].astype(ESQUEMA_VIAJES, copy=False)
