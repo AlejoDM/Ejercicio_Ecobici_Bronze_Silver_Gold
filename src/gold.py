@@ -86,3 +86,44 @@ def construir_dim_usuario(usuarios: pd.DataFrame) -> pd.DataFrame:
             "anio_alta": usuarios.fecha_alta.dt.year.astype("int64"),
         }
     )
+
+
+def construir_fact_viajes(viajes: pd.DataFrame) -> pd.DataFrame:
+    """Una fila por viaje válido, con claves hacia las dimensiones."""
+    return pd.DataFrame(
+        {
+            "id_viaje": viajes.id_viaje,
+            "fecha_key": _clave_fecha(viajes.fecha_hora_inicio),
+            "hora_inicio": viajes.fecha_hora_inicio.dt.hour.astype("int64"),
+            "id_estacion_origen": viajes.id_estacion_origen,
+            "id_estacion_destino": viajes.id_estacion_destino,
+            "id_usuario": viajes.id_usuario,
+            "duracion_min": (viajes.duracion_seg / 60).round(1).astype("float64"),
+            "es_circular": (viajes.id_estacion_origen == viajes.id_estacion_destino).astype(bool),
+        }
+    )
+
+
+def verificar_modelo(
+    fact: pd.DataFrame,
+    viajes: pd.DataFrame,
+    dim_fecha: pd.DataFrame,
+    dim_estacion: pd.DataFrame,
+    dim_usuario: pd.DataFrame,
+) -> dict[str, int]:
+    """Falla si el modelo está roto. Devuelve cuántos viajes no tienen usuario conocido."""
+    if len(fact) != len(viajes):
+        raise RuntimeError(f"fact_viajes tiene {len(fact):,} filas y silver {len(viajes):,}")
+    if not fact.fecha_key.isin(dim_fecha.fecha_key).all():
+        raise RuntimeError("Hay fecha_key en fact_viajes que no existe en dim_fecha")
+
+    estaciones = dim_estacion.id_estacion
+    if not (fact.id_estacion_origen.isin(estaciones).all() and fact.id_estacion_destino.isin(estaciones).all()):
+        raise RuntimeError("Hay estaciones en fact_viajes que no existen en dim_estacion")
+
+    # No es un error: el id de usuario de los viajes no siempre coincide con el archivo de usuarios.
+    con_id = fact.id_usuario.notna()
+    return {
+        "sin_id_usuario": int((~con_id).sum()),
+        "id_usuario_no_encontrado": int((con_id & ~fact.id_usuario.isin(dim_usuario.id_usuario)).sum()),
+    }
