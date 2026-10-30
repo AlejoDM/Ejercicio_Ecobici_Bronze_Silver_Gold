@@ -89,7 +89,7 @@ def construir_dim_usuario(usuarios: pd.DataFrame) -> pd.DataFrame:
 
 
 def construir_fact_viajes(viajes: pd.DataFrame) -> pd.DataFrame:
-    """Una fila por viaje válido, con claves hacia las dimensiones."""
+    """Una fila por viaje válido, con claves hacia las dimensiones (modelo estrella)."""
     return pd.DataFrame(
         {
             "id_viaje": viajes.id_viaje,

@@ -191,6 +191,7 @@ def _motivos(df: pd.DataFrame, reglas: list[tuple[str, pd.Series]]) -> pd.Series
 
 def _separar(df: pd.DataFrame, motivo: pd.Series) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Divide en válidos y cuarentena, agregando la columna motivo a esta última."""
+    # Los rechazados no se borran: quedan como una cola de mensajes fallidos (dead-letter).
     rechazado = motivo.notna()
     return df[~rechazado], df[rechazado].assign(motivo=motivo[rechazado])
 
