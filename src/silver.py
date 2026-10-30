@@ -4,13 +4,14 @@ Cada año se lleva al mismo esquema canónico. Los registros que no pasan
 los controles de calidad se mueven a una tabla de cuarentena con su motivo.
 """
 
+import os
 import re
 import unicodedata
 
 import pandas as pd
 import pyarrow.parquet as pq
 
-from src.config import BRONZE, DURACION_MAXIMA_SEG, EDAD_MAXIMA, EDAD_MINIMA
+from src.config import ANIOS, BRONZE, DURACION_MAXIMA_SEG, EDAD_MAXIMA, EDAD_MINIMA, SILVER
 
 # Columnas originales de cada año hacia el esquema canónico.
 # Las que un año no trae no aparecen acá: se completan al transformar.
@@ -225,6 +226,64 @@ def aplicar_calidad_usuarios(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFra
     repetidos = candidatos.index[candidatos.id_usuario.duplicated(keep="first")]
     motivo.loc[repetidos] = "DUPLICADO"
     return _separar(df, motivo)
+
+
+def validar_esquema(df: pd.DataFrame, esquema: dict[str, str]) -> None:
+    """Falla si las columnas o los tipos no son exactamente los del esquema."""
+    encontrado = {columna: str(tipo) for columna, tipo in df.dtypes.items()}
+    if encontrado != esquema:
+        raise ValueError(f"El esquema no coincide.\nEsperado: {esquema}\nEncontrado: {encontrado}")
+
+
+def _filas_bronze(tabla: str, anio: int) -> int:
+    """Cantidad de filas del archivo de bronze, leída de los metadatos del Parquet."""
+    ruta = BRONZE / tabla / f"anio={anio}" / "data.parquet"
+    return pq.ParquetFile(ruta).metadata.num_rows
+
+
+def _verificar_conciliacion(tabla_bronze: str, anio: int, validos: pd.DataFrame, cuarentena: pd.DataFrame) -> None:
+    """Ningún registro puede perderse: bronze = silver + cuarentena."""
+    origen = _filas_bronze(tabla_bronze, anio)
+    destino = len(validos) + len(cuarentena)
+    if origen != destino:
+        raise RuntimeError(
+            f"{tabla_bronze} {anio}: bronze tiene {origen:,} filas y silver + cuarentena suman {destino:,}"
+        )
+
+
+def _guardar(df: pd.DataFrame, tabla: str, anio: int, esquema: dict[str, str]) -> None:
+    """Valida el esquema y escribe la partición del año, reemplazando la anterior."""
+    validar_esquema(df, esquema)
+    carpeta = SILVER / tabla / f"anio={anio}"
+    carpeta.mkdir(parents=True, exist_ok=True)
+    temporal = carpeta / "data.parquet.tmp"
+    df.to_parquet(temporal, index=False)
+    os.replace(temporal, carpeta / "data.parquet")
+
+
+def ejecutar_silver() -> dict[str, dict[int, tuple[int, int]]]:
+    """Ejecuta la capa silver. Devuelve (válidos, cuarentena) por tabla y año."""
+    resumen = {"viajes": {}, "usuarios": {}}
+
+    for anio in ANIOS:
+        validos, cuarentena = aplicar_calidad_viajes(transformar_viajes(anio))
+        _verificar_conciliacion("recorridos", anio, validos, cuarentena)
+        _guardar(validos, "viajes", anio, ESQUEMA_VIAJES)
+        _guardar(cuarentena, "viajes_cuarentena", anio, {**ESQUEMA_VIAJES, "motivo": "string"})
+        resumen["viajes"][anio] = (len(validos), len(cuarentena))
+
+    # Los usuarios se unifican entre años para detectar ids repetidos.
+    usuarios = pd.concat([transformar_usuarios(anio) for anio in ANIOS], ignore_index=True)
+    validos, cuarentena = aplicar_calidad_usuarios(usuarios)
+    for anio in ANIOS:
+        validos_anio = validos[validos.anio_fuente == anio]
+        cuarentena_anio = cuarentena[cuarentena.anio_fuente == anio]
+        _verificar_conciliacion("usuarios", anio, validos_anio, cuarentena_anio)
+        _guardar(validos_anio, "usuarios", anio, ESQUEMA_USUARIOS)
+        _guardar(cuarentena_anio, "usuarios_cuarentena", anio, {**ESQUEMA_USUARIOS, "motivo": "string"})
+        resumen["usuarios"][anio] = (len(validos_anio), len(cuarentena_anio))
+
+    return resumen
 
 
 def transformar_viajes(anio: int) -> pd.DataFrame:
