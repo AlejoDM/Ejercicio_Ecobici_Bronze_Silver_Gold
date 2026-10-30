@@ -4,13 +4,13 @@ Cada año se lleva al mismo esquema canónico. Los registros que no pasan
 los controles de calidad se mueven a una tabla de cuarentena con su motivo.
 """
 
-import os
 import re
 import unicodedata
 
 import pandas as pd
 import pyarrow.parquet as pq
 
+from src.almacenamiento import escribir_parquet
 from src.config import ANIOS, BRONZE, DURACION_MAXIMA_SEG, EDAD_MAXIMA, EDAD_MINIMA, SILVER
 
 # Columnas originales de cada año hacia el esquema canónico.
@@ -254,11 +254,7 @@ def _verificar_conciliacion(tabla_bronze: str, anio: int, validos: pd.DataFrame,
 def _guardar(df: pd.DataFrame, tabla: str, anio: int, esquema: dict[str, str]) -> None:
     """Valida el esquema y escribe la partición del año, reemplazando la anterior."""
     validar_esquema(df, esquema)
-    carpeta = SILVER / tabla / f"anio={anio}"
-    carpeta.mkdir(parents=True, exist_ok=True)
-    temporal = carpeta / "data.parquet.tmp"
-    df.to_parquet(temporal, index=False)
-    os.replace(temporal, carpeta / "data.parquet")
+    escribir_parquet(df, SILVER / tabla / f"anio={anio}" / "data.parquet")
 
 
 def ejecutar_silver() -> dict[str, dict[int, tuple[int, int]]]:
