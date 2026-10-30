@@ -114,6 +114,8 @@ def verificar_modelo(
     """Falla si el modelo está roto. Devuelve cuántos viajes no tienen usuario conocido."""
     if len(fact) != len(viajes):
         raise RuntimeError(f"fact_viajes tiene {len(fact):,} filas y silver {len(viajes):,}")
+    if not fact.id_viaje.is_unique:
+        raise RuntimeError("Hay id_viaje repetidos en fact_viajes")
     if not fact.fecha_key.isin(dim_fecha.fecha_key).all():
         raise RuntimeError("Hay fecha_key en fact_viajes que no existe en dim_fecha")
 
