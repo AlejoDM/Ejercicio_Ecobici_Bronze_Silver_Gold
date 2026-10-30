@@ -76,6 +76,28 @@ FORMATO_FECHA_ALTA = {
     2024: "%Y-%m-%d %H:%M:%S",
 }
 
+# Esquema canónico: columnas y tipos que tienen que tener todas las tablas silver.
+ESQUEMA_VIAJES = {
+    "id_viaje": "string",
+    "fecha_hora_inicio": "datetime64[ns]",
+    "fecha_hora_fin": "datetime64[ns]",
+    "duracion_seg": "Int64",
+    "id_estacion_origen": "Int64",
+    "nombre_estacion_origen": "string",
+    "id_estacion_destino": "Int64",
+    "nombre_estacion_destino": "string",
+    "id_usuario": "string",
+    "anio_fuente": "Int64",
+}
+
+ESQUEMA_USUARIOS = {
+    "id_usuario": "string",
+    "genero": "string",
+    "edad": "Int64",
+    "fecha_alta": "datetime64[ns]",
+    "anio_fuente": "Int64",
+}
+
 
 def _leer_bronze(tabla: str, anio: int, mapeo: dict[str, str]) -> pd.DataFrame:
     """Lee de bronze solo las columnas que están en el mapeo."""
@@ -86,3 +108,55 @@ def _leer_bronze(tabla: str, anio: int, mapeo: dict[str, str]) -> pd.DataFrame:
 def renombrar(df: pd.DataFrame, mapeo: dict[str, str]) -> pd.DataFrame:
     """Renombra al esquema canónico y descarta lo que no está en el mapeo."""
     return df.rename(columns=mapeo)[list(mapeo.values())]
+
+
+def _id_texto(serie: pd.Series) -> pd.Series:
+    """Quita el sufijo 'BAEcobici' y el '.0' de los ids, y los deja como texto."""
+    limpio = serie.str.strip().str.replace("BAEcobici", "", regex=False)
+    return limpio.str.replace(r"\.0$", "", regex=True).astype("string")
+
+
+def _id_entero(serie: pd.Series) -> pd.Series:
+    """Id de estación como entero. Lo que no es numérico queda nulo."""
+    return pd.to_numeric(_id_texto(serie), errors="coerce").astype("Int64")
+
+
+def _fecha(serie: pd.Series, formato: str) -> pd.Series:
+    """Convierte a fecha con el formato del año. Lo que no se entiende queda NaT."""
+    return pd.to_datetime(serie, format=formato, errors="coerce").astype("datetime64[ns]")
+
+
+def transformar_viajes(anio: int) -> pd.DataFrame:
+    """Lleva los viajes de un año al esquema canónico, con tipos correctos."""
+    mapeo = MAPEO_VIAJES[anio]
+    df = renombrar(_leer_bronze("recorridos", anio, mapeo), mapeo)
+
+    df["fecha_hora_inicio"] = _fecha(df.fecha_hora_inicio, FORMATO_FECHA_VIAJE)
+    df["fecha_hora_fin"] = _fecha(df.fecha_hora_fin, FORMATO_FECHA_VIAJE)
+    df["id_estacion_origen"] = _id_entero(df.id_estacion_origen)
+    df["id_estacion_destino"] = _id_entero(df.id_estacion_destino)
+
+    if "duracion_seg" in df:
+        # Los años con duración en segundos traen separador de miles ("2,814").
+        df["duracion_seg"] = pd.to_numeric(
+            df.duracion_seg.str.replace(",", "", regex=False), errors="coerce"
+        ).astype("Int64")
+    else:
+        # 2016: la duración declarada no coincide con las fechas; se calcula.
+        df["duracion_seg"] = (df.fecha_hora_fin - df.fecha_hora_inicio).dt.total_seconds()
+        df["duracion_seg"] = df.duracion_seg.round().astype("Int64")
+
+    if "id_viaje" in df:
+        df["id_viaje"] = f"{anio}-" + _id_texto(df.id_viaje)
+    else:
+        # 2016 no trae id de viaje: se genera según el orden en bronze.
+        df["id_viaje"] = [f"{anio}-{n:07d}" for n in range(1, len(df) + 1)]
+
+    if "id_usuario" in df:
+        df["id_usuario"] = _id_texto(df.id_usuario)
+    else:
+        # 2016 no trae id de usuario.
+        df["id_usuario"] = pd.NA
+
+    df["anio_fuente"] = anio
+    return df.astype(ESQUEMA_VIAJES)[list(ESQUEMA_VIAJES)]
