@@ -111,5 +111,6 @@ def ejecutar_reportes() -> dict[str, Path]:
     rutas = {}
     for nombre, tabla in reportes.items():
         rutas[nombre] = REPORTES / nombre
-        tabla.to_csv(rutas[nombre], index=False)
+        # Fin de línea LF en todos los sistemas, para que el CSV sea idéntico en cualquier máquina.
+        tabla.to_csv(rutas[nombre], index=False, lineterminator="\n")
     return rutas
