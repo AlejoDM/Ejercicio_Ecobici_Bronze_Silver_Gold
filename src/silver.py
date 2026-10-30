@@ -271,6 +271,8 @@ def ejecutar_silver() -> dict[str, dict[int, tuple[int, int]]]:
     # Los usuarios se unifican entre años para detectar ids repetidos.
     usuarios = pd.concat([transformar_usuarios(anio) for anio in ANIOS], ignore_index=True)
     validos, cuarentena = aplicar_calidad_usuarios(usuarios)
+    if not validos.id_usuario.is_unique:
+        raise RuntimeError("Hay id_usuario repetidos en silver/usuarios")
     for anio in ANIOS:
         validos_anio = validos[validos.anio_fuente == anio]
         cuarentena_anio = cuarentena[cuarentena.anio_fuente == anio]
