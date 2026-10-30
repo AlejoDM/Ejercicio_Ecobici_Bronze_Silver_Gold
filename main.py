@@ -9,6 +9,7 @@ from typing import Any
 
 from src.bronze import ejecutar_bronze
 from src.config import ANIOS, ARCHIVOS_RECORRIDOS, ARCHIVOS_USUARIOS, RAW
+from src.gold import ejecutar_gold
 from src.silver import ejecutar_silver
 
 
@@ -42,6 +43,10 @@ def main() -> None:
     for tabla, por_anio in resumen_silver.items():
         for anio, (validos, cuarentena) in por_anio.items():
             print(f"   {tabla} {anio}: {validos:,} válidos, {cuarentena:,} en cuarentena")
+
+    sin_usuario = ejecutar_paso("Gold", ejecutar_gold)
+    for motivo, cantidad in sin_usuario.items():
+        print(f"   viajes {motivo}: {cantidad:,}")
 
 
 if __name__ == "__main__":

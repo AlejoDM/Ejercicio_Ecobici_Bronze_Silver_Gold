@@ -5,8 +5,8 @@ Gold solo arma tablas a partir de silver: no limpia ni corrige nada.
 
 import pandas as pd
 
-from src.almacenamiento import leer_particiones
-from src.config import SILVER
+from src.almacenamiento import escribir_parquet, leer_particiones
+from src.config import GOLD, SILVER
 
 DIAS_SEMANA = ["lunes", "martes", "miércoles", "jueves", "viernes", "sábado", "domingo"]
 
@@ -127,3 +127,21 @@ def verificar_modelo(
         "sin_id_usuario": int((~con_id).sum()),
         "id_usuario_no_encontrado": int((con_id & ~fact.id_usuario.isin(dim_usuario.id_usuario)).sum()),
     }
+
+
+def ejecutar_gold() -> dict[str, int]:
+    """Construye el modelo estrella desde silver y lo guarda en data/gold/."""
+    viajes = leer_particiones(SILVER / "viajes")
+    usuarios = leer_particiones(SILVER / "usuarios")
+
+    dim_fecha = construir_dim_fecha(viajes)
+    dim_estacion = construir_dim_estacion(viajes)
+    dim_usuario = construir_dim_usuario(usuarios)
+    fact = construir_fact_viajes(viajes)
+    sin_usuario = verificar_modelo(fact, viajes, dim_fecha, dim_estacion, dim_usuario)
+
+    escribir_parquet(dim_fecha, GOLD / "dim_fecha.parquet")
+    escribir_parquet(dim_estacion, GOLD / "dim_estacion.parquet")
+    escribir_parquet(dim_usuario, GOLD / "dim_usuario.parquet")
+    escribir_parquet(fact, GOLD / "fact_viajes.parquet")
+    return sin_usuario
