@@ -1,0 +1,11 @@
+# Entorno virtual y caché de Python
+.venv/
+__pycache__/
+*.pyc
+
+# Datos pesados: se regeneran ejecutando el pipeline
+data/raw/
+data/bronze/
+data/silver/
+data/gold/*
+!data/gold/reportes/
