@@ -11,7 +11,8 @@ Las decisiones que no están en el enunciado están documentadas en [DECISIONES.
 ## Requisitos
 
 - Python 3.14 (versión con la que se probó el proyecto).
-- Unos 4 GB de espacio libre para los datos generados, y unos 2 GB de memoria RAM disponibles.
+- Unos 1,5 GB de espacio libre: 570 MB de archivos originales y unos 900 MB de datos generados.
+- Memoria RAM suficiente para leer un año completo de viajes; la prueba se hizo con 16 GB.
 
 ## Instalación
 
