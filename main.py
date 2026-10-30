@@ -9,6 +9,7 @@ from typing import Any
 
 from src.bronze import ejecutar_bronze
 from src.config import ANIOS, ARCHIVOS_RECORRIDOS, ARCHIVOS_USUARIOS, RAW
+from src.silver import ejecutar_silver
 
 
 def verificar_archivos_originales() -> None:
@@ -36,6 +37,11 @@ def main() -> None:
     for tabla, por_anio in filas_bronze.items():
         for anio, cantidad in por_anio.items():
             print(f"   {tabla} {anio}: {cantidad:,} filas")
+
+    resumen_silver = ejecutar_paso("Silver", ejecutar_silver)
+    for tabla, por_anio in resumen_silver.items():
+        for anio, (validos, cuarentena) in por_anio.items():
+            print(f"   {tabla} {anio}: {validos:,} válidos, {cuarentena:,} en cuarentena")
 
 
 if __name__ == "__main__":
