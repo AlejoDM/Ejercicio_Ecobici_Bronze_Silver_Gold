@@ -4,10 +4,13 @@ Cada año se lleva al mismo esquema canónico. Los registros que no pasan
 los controles de calidad se mueven a una tabla de cuarentena con su motivo.
 """
 
+import re
+import unicodedata
+
 import pandas as pd
 import pyarrow.parquet as pq
 
-from src.config import BRONZE
+from src.config import BRONZE, EDAD_MAXIMA, EDAD_MINIMA
 
 # Columnas originales de cada año hacia el esquema canónico.
 # Las que un año no trae no aparecen acá: se completan al transformar.
@@ -98,6 +101,19 @@ ESQUEMA_USUARIOS = {
     "anio_fuente": "Int64",
 }
 
+# Valores de género de las tres fuentes, llevados a cuatro categorías.
+GENEROS = {
+    "F": "F",
+    "FEMALE": "F",
+    "FEMENINO": "F",
+    "M": "M",
+    "MALE": "M",
+    "MASCULINO": "M",
+    "OTHER": "OTRO",
+    "OTRO": "OTRO",
+    "X": "OTRO",
+}
+
 
 def _leer_bronze(tabla: str, anio: int, mapeo: dict[str, str]) -> pd.DataFrame:
     """Lee de bronze solo las columnas que están en el mapeo."""
@@ -126,6 +142,44 @@ def _fecha(serie: pd.Series, formato: str) -> pd.Series:
     return pd.to_datetime(serie, format=formato, errors="coerce").astype("datetime64[ns]")
 
 
+def _normalizar_nombre(texto: str) -> str | None:
+    """Sin tildes, en mayúsculas, con espacios simples y sin el código inicial ('005 - ')."""
+    sin_tildes = unicodedata.normalize("NFKD", texto).encode("ascii", "ignore").decode("ascii")
+    limpio = re.sub(r"\s+", " ", sin_tildes.strip().upper())
+    limpio = re.sub(r"^\d+\s*-\s*", "", limpio)
+    return limpio or None
+
+
+def _nombres_estacion(serie: pd.Series) -> pd.Series:
+    """Normaliza los nombres de estación evaluando cada valor distinto una sola vez."""
+    equivalencias = {v: _normalizar_nombre(v) for v in serie.dropna().unique()}
+    return serie.map(equivalencias).astype("string")
+
+
+def _genero(serie: pd.Series) -> pd.Series:
+    """Género en F, M, OTRO o DESCONOCIDO (vacío o valor no reconocido)."""
+    return serie.str.strip().str.upper().map(GENEROS).fillna("DESCONOCIDO").astype("string")
+
+
+def transformar_usuarios(anio: int) -> pd.DataFrame:
+    """Lleva los usuarios de un año al esquema canónico."""
+    mapeo = MAPEO_USUARIOS[anio]
+    df = renombrar(_leer_bronze("usuarios", anio, mapeo), mapeo)
+
+    # Fecha y hora vienen en columnas separadas: se unen antes de convertir.
+    alta = df.pop("fecha_alta_texto") + " " + df.pop("hora_alta_texto")
+    df["fecha_alta"] = _fecha(alta, FORMATO_FECHA_ALTA[anio])
+    df["id_usuario"] = _id_texto(df.id_usuario)
+    df["genero"] = _genero(df.genero)
+
+    # Las edades fuera de rango no se rechazan: quedan nulas.
+    edad = pd.to_numeric(df.edad, errors="coerce")
+    df["edad"] = edad.where(edad.between(EDAD_MINIMA, EDAD_MAXIMA)).astype("Int64")
+
+    df["anio_fuente"] = anio
+    return df.astype(ESQUEMA_USUARIOS)[list(ESQUEMA_USUARIOS)]
+
+
 def transformar_viajes(anio: int) -> pd.DataFrame:
     """Lleva los viajes de un año al esquema canónico, con tipos correctos."""
     mapeo = MAPEO_VIAJES[anio]
@@ -135,6 +189,8 @@ def transformar_viajes(anio: int) -> pd.DataFrame:
     df["fecha_hora_fin"] = _fecha(df.fecha_hora_fin, FORMATO_FECHA_VIAJE)
     df["id_estacion_origen"] = _id_entero(df.id_estacion_origen)
     df["id_estacion_destino"] = _id_entero(df.id_estacion_destino)
+    df["nombre_estacion_origen"] = _nombres_estacion(df.nombre_estacion_origen)
+    df["nombre_estacion_destino"] = _nombres_estacion(df.nombre_estacion_destino)
 
     if "duracion_seg" in df:
         # Los años con duración en segundos traen separador de miles ("2,814").
