@@ -10,7 +10,7 @@ import unicodedata
 import pandas as pd
 import pyarrow.parquet as pq
 
-from src.config import BRONZE, EDAD_MAXIMA, EDAD_MINIMA
+from src.config import BRONZE, DURACION_MAXIMA_SEG, EDAD_MAXIMA, EDAD_MINIMA
 
 # Columnas originales de cada año hacia el esquema canónico.
 # Las que un año no trae no aparecen acá: se completan al transformar.
@@ -178,6 +178,53 @@ def transformar_usuarios(anio: int) -> pd.DataFrame:
 
     df["anio_fuente"] = anio
     return df.astype(ESQUEMA_USUARIOS)[list(ESQUEMA_USUARIOS)]
+
+
+def _motivos(df: pd.DataFrame, reglas: list[tuple[str, pd.Series]]) -> pd.Series:
+    """Motivo de rechazo de cada fila: el primero que cumple, en el orden dado."""
+    motivo = pd.Series(pd.NA, index=df.index, dtype="string")
+    for nombre, condicion in reglas:
+        motivo = motivo.mask(motivo.isna() & condicion.fillna(False).astype(bool), nombre)
+    return motivo
+
+
+def _separar(df: pd.DataFrame, motivo: pd.Series) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Divide en válidos y cuarentena, agregando la columna motivo a esta última."""
+    rechazado = motivo.notna()
+    return df[~rechazado], df[rechazado].assign(motivo=motivo[rechazado])
+
+
+def aplicar_calidad_viajes(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Separa los viajes válidos de los rechazados. Devuelve (validos, cuarentena)."""
+    motivo = _motivos(
+        df,
+        [
+            ("FECHA_INVALIDA", df.fecha_hora_inicio.isna() | df.fecha_hora_fin.isna()),
+            ("ESTACION_NULA", df.id_estacion_origen.isna() | df.id_estacion_destino.isna()),
+            ("FIN_ANTERIOR_A_INICIO", df.fecha_hora_fin < df.fecha_hora_inicio),
+            ("DURACION_MAYOR_24H", df.duracion_seg > DURACION_MAXIMA_SEG),
+            ("DUPLICADO", df.id_viaje.duplicated(keep="first")),
+        ],
+    )
+    return _separar(df, motivo)
+
+
+def aplicar_calidad_usuarios(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Separa los usuarios válidos. Ante un duplicado, conserva el alta más reciente."""
+    motivo = _motivos(
+        df,
+        [
+            ("ID_NULO", df.id_usuario.isna()),
+            ("FECHA_INVALIDA", df.fecha_alta.isna()),
+        ],
+    )
+    # Ordenar por alta reciente primero: el duplicado que queda marcado es el más viejo.
+    candidatos = df[motivo.isna()].sort_values(
+        "fecha_alta", ascending=False, na_position="last", kind="stable"
+    )
+    repetidos = candidatos.index[candidatos.id_usuario.duplicated(keep="first")]
+    motivo.loc[repetidos] = "DUPLICADO"
+    return _separar(df, motivo)
 
 
 def transformar_viajes(anio: int) -> pd.DataFrame:
